@@ -113,9 +113,9 @@ def _post_whisper_audio(wav_path: str, server_url: str, translate: bool) -> str:
     if requests is not None:
         with open(wav_path, "rb") as audio_file:
             files = {"file": (os.path.basename(wav_path), audio_file, "audio/wav")}
-            data = {"response_format": "srt"}
-            if translate:
-                data["translate"] = "true"
+            # This plugin always transcribes in English with no translation,
+            # sent explicitly so the server's CLI defaults (e.g. -l ja -tr) cannot override.
+            data = {"response_format": "srt", "language": "en", "translate": "false"}
             try:
                 resp = requests.post(server_url, files=files, data=data, timeout=3600)
                 resp.raise_for_status()
@@ -137,8 +137,9 @@ def _post_whisper_audio(wav_path: str, server_url: str, translate: bool) -> str:
 
         parts = []
         parts.append(_encode_part("response_format", "srt"))
-        if translate:
-            parts.append(_encode_part("translate", "true"))
+        # Always English, never translate (override server -l ja -tr defaults).
+        parts.append(_encode_part("language", "en"))
+        parts.append(_encode_part("translate", "false"))
         file_header = (
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="file"; filename="{os.path.basename(wav_path)}"\r\n'
