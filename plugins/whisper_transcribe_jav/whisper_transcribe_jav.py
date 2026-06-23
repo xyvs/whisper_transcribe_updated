@@ -9,6 +9,7 @@ It follows the same structure as the example RenameFile plugin.
 
 import os
 import sys
+import re
 import traceback
 import subprocess
 import tempfile
@@ -265,7 +266,81 @@ def _trigger_metadata_scan(paths: list[str]) -> None:
         stash.Warn(f"Failed to start metadata scan for captions: {e}")
 
 
-def transcribe_video(video_path: str, translate: bool = False, server_url: str = "http://127.0.0.1:9191/inference", caption_language: str | None = None, extra_fields: dict | None = None) -> str:
+# ----------------------------------------------------------------------
+# SRT post-processing — emulate WhisperJAV's cleanup: strip non-lexical
+# markers, drop repetition loops, and cap over-long lingering captions.
+# ----------------------------------------------------------------------
+_SRT_TIME_RE = re.compile(
+    r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})"
+)
+# Non-lexical markers like (moans), [music], （あえぎ）, 【BGM】
+_MARKER_RE = re.compile(r"[\(\[（【][^\)\]）】]*[\)\]）】]")
+
+
+def _srt_time_to_ms(h, m, s, ms) -> int:
+    return ((int(h) * 60 + int(m)) * 60 + int(s)) * 1000 + int(ms)
+
+
+def _ms_to_srt_time(ms: int) -> str:
+    ms = max(0, int(ms))
+    h, ms = divmod(ms, 3600000)
+    m, ms = divmod(ms, 60000)
+    s, ms = divmod(ms, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _parse_srt(srt_text: str) -> list:
+    cues = []
+    for block in re.split(r"\n\s*\n", srt_text.strip()):
+        lines = block.splitlines()
+        time_idx = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
+        if time_idx is None:
+            continue
+        mt = _SRT_TIME_RE.search(lines[time_idx])
+        if not mt:
+            continue
+        start = _srt_time_to_ms(*mt.group(1, 2, 3, 4))
+        end = _srt_time_to_ms(*mt.group(5, 6, 7, 8))
+        text = "\n".join(lines[time_idx + 1:]).strip()
+        cues.append([start, end, text])
+    return cues
+
+
+def _postprocess_srt(srt_text: str, max_caption_seconds: float | None = None, clean_subtitles: bool = False) -> str:
+    """Return a cleaned SRT. No-op if nothing is enabled or parsing fails."""
+    if not srt_text or (not clean_subtitles and not max_caption_seconds):
+        return srt_text
+    cues = _parse_srt(srt_text)
+    if not cues:
+        return srt_text
+
+    if clean_subtitles:
+        cleaned = []
+        for start, end, text in cues:
+            t = _MARKER_RE.sub("", text)          # strip (moans) / [music] markers
+            t = re.sub(r"\s+", " ", t).strip()    # collapse whitespace
+            if not t:
+                continue                          # drop marker-only / empty cues
+            # merge consecutive duplicate lines (repetition loops)
+            if cleaned and cleaned[-1][2] == t:
+                cleaned[-1][1] = max(cleaned[-1][1], end)
+                continue
+            cleaned.append([start, end, t])
+        cues = cleaned
+
+    if max_caption_seconds and max_caption_seconds > 0:
+        cap = int(max_caption_seconds * 1000)
+        for cue in cues:
+            if cue[1] - cue[0] > cap:
+                cue[1] = cue[0] + cap
+
+    return "\n".join(
+        f"{i}\n{_ms_to_srt_time(s)} --> {_ms_to_srt_time(e)}\n{t}\n"
+        for i, (s, e, t) in enumerate(cues, 1)
+    )
+
+
+def transcribe_video(video_path: str, translate: bool = False, server_url: str = "http://127.0.0.1:9191/inference", caption_language: str | None = None, extra_fields: dict | None = None, max_caption_seconds: float | None = None, clean_subtitles: bool = False) -> str:
     """
     Transcribes a video file using a whisper.cpp server. Produces an .srt next to the video
     and returns the caption path.
@@ -311,7 +386,8 @@ def transcribe_video(video_path: str, translate: bool = False, server_url: str =
             except Exception:
                 pass
 
-    # 3. Save response to SRT file
+    # 3. Clean up the SRT (dedupe loops, strip markers, cap long cues) then save.
+    response_text = _postprocess_srt(response_text, max_caption_seconds, clean_subtitles)
     srt_path = _build_caption_path(video_path, caption_language)
     try:
         with open(srt_path, "w", encoding="utf-8") as srt_file:
@@ -426,6 +502,14 @@ max_context = stash.Setting("maxContext", None)
 suppress_non_speech_tokens = stash.Setting("suppressNonSpeechTokens", False)
 initial_prompt = stash.Setting("initialPrompt", "")
 
+# SRT post-processing settings (WhisperJAV-style cleanup).
+clean_subtitles = stash.Setting("cleanSubtitles", False)
+_raw_max_caption = stash.Setting("maxCaptionSeconds", None)
+try:
+    max_caption_seconds = float(_raw_max_caption) if _raw_max_caption is not None and str(_raw_max_caption).strip() != "" else None
+except (TypeError, ValueError):
+    max_caption_seconds = None
+
 
 def _build_extra_whisper_fields() -> dict:
     """
@@ -532,6 +616,8 @@ def transcribe_scene(scene_id: int):
                 server_url=server_url,
                 caption_language=caption_language,
                 extra_fields=extra_whisper_fields,
+                max_caption_seconds=max_caption_seconds,
+                clean_subtitles=clean_subtitles,
             )
 
         stash.Log(f"Transcription completed for scene {scene_id} (file: {video_path})")

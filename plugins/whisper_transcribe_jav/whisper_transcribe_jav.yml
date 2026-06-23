@@ -36,6 +36,14 @@ settings:
     displayName: Initial Prompt
     description: "Optional context prompt to guide transcription (e.g. domain vocabulary or expected phrasing)."
     type: STRING
+  cleanSubtitles:
+    displayName: Clean Subtitles
+    description: "Post-process the SRT: drop repeated lines (loops) and strip non-lexical markers like (moans)/[music]."
+    type: BOOLEAN
+  maxCaptionSeconds:
+    displayName: Max Caption Seconds
+    description: "Cap how long any single caption stays on screen (fixes lines lingering over silence). Blank = no cap. Try 7."
+    type: NUMBER
   zzdebugTracing:
     displayName: Debug Tracing
     description: Enable debug tracing for additional logging.
