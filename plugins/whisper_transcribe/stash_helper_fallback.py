@@ -84,7 +84,11 @@ class StashPluginHelper:
         try:
             msg = " ".join(str(a) for a in args)
             lvl = self._STASH_LEVELS.get(level_char, "i")
-            for line in (msg.splitlines() or [""]):
+            # Skip empty lines: "\x01<lvl>\x02" is only 3 chars and Stash needs >=4
+            # to detect the level, so an empty line renders as a bogus Error.
+            for line in msg.splitlines():
+                if line == "":
+                    continue
                 sys.stderr.write(f"\x01{lvl}\x02{line}\n")
             sys.stderr.flush()
         except Exception:

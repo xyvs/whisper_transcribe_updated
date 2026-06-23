@@ -548,4 +548,4 @@ except Exception as e:
     tb = traceback.format_exc()
     stash.Error(f"Exception while running plugin: {e}\nTraceBack={tb}")
 
-stash.Trace("\n*********************************\nEXITING   ***********************\n*********************************")
+stash.Trace("Exiting WhisperTranscribe plugin")

@@ -86,8 +86,12 @@ class StashPluginHelper:
             msg = " ".join(str(a) for a in args)
             lvl = self._STASH_LEVELS.get(level_char, "i")
             # Encode each line separately so multi-line messages (e.g. tracebacks)
-            # are all reported at the intended level.
-            for line in (msg.splitlines() or [""]):
+            # are all reported at the intended level. Skip empty lines: "\x01<lvl>\x02"
+            # is only 3 chars and Stash needs >=4 to detect the level, so an empty
+            # line would render as a bogus Error showing the bare level char.
+            for line in msg.splitlines():
+                if line == "":
+                    continue
                 sys.stderr.write(f"\x01{lvl}\x02{line}\n")
             sys.stderr.flush()
         except Exception:
