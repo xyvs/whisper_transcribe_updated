@@ -306,27 +306,27 @@ def _parse_srt(srt_text: str) -> list:
     return cues
 
 
-def _postprocess_srt(srt_text: str, max_caption_seconds: float | None = None, clean_subtitles: bool = False) -> str:
+def _postprocess_srt(srt_text: str, max_caption_seconds: float | None = None, dedupe_repeats: bool = False, strip_markers: bool = False) -> str:
     """Return a cleaned SRT. No-op if nothing is enabled or parsing fails."""
-    if not srt_text or (not clean_subtitles and not max_caption_seconds):
+    if not srt_text or not (dedupe_repeats or strip_markers or max_caption_seconds):
         return srt_text
     cues = _parse_srt(srt_text)
     if not cues:
         return srt_text
 
-    if clean_subtitles:
-        cleaned = []
+    if dedupe_repeats or strip_markers:
+        processed = []
         for start, end, text in cues:
-            t = _MARKER_RE.sub("", text)          # strip (moans) / [music] markers
-            t = re.sub(r"\s+", " ", t).strip()    # collapse whitespace
+            t = _MARKER_RE.sub("", text) if strip_markers else text  # markers kept unless strip is on
+            t = re.sub(r"\s+", " ", t).strip()    # normalise whitespace
             if not t:
                 continue                          # drop marker-only / empty cues
-            # merge consecutive duplicate lines (repetition loops)
-            if cleaned and cleaned[-1][2] == t:
-                cleaned[-1][1] = max(cleaned[-1][1], end)
+            # Collapse consecutive duplicate lines but keep the FIRST cue's timing
+            # (do NOT extend the end) so repeated lines disappear instead of lingering.
+            if dedupe_repeats and processed and processed[-1][2] == t:
                 continue
-            cleaned.append([start, end, t])
-        cues = cleaned
+            processed.append([start, end, t])
+        cues = processed
 
     if max_caption_seconds and max_caption_seconds > 0:
         cap = int(max_caption_seconds * 1000)
@@ -340,7 +340,7 @@ def _postprocess_srt(srt_text: str, max_caption_seconds: float | None = None, cl
     )
 
 
-def transcribe_video(video_path: str, translate: bool = False, server_url: str = "http://127.0.0.1:9191/inference", caption_language: str | None = None, extra_fields: dict | None = None, max_caption_seconds: float | None = None, clean_subtitles: bool = False) -> str:
+def transcribe_video(video_path: str, translate: bool = False, server_url: str = "http://127.0.0.1:9191/inference", caption_language: str | None = None, extra_fields: dict | None = None, max_caption_seconds: float | None = None, dedupe_repeats: bool = False, strip_markers: bool = False) -> str:
     """
     Transcribes a video file using a whisper.cpp server. Produces an .srt next to the video
     and returns the caption path.
@@ -387,7 +387,14 @@ def transcribe_video(video_path: str, translate: bool = False, server_url: str =
                 pass
 
     # 3. Clean up the SRT (dedupe loops, strip markers, cap long cues) then save.
-    response_text = _postprocess_srt(response_text, max_caption_seconds, clean_subtitles)
+    _cues_before = response_text.count("-->")
+    response_text = _postprocess_srt(response_text, max_caption_seconds, dedupe_repeats, strip_markers)
+    _cues_after = response_text.count("-->")
+    try:
+        stash.Log(f"[WhisperTranscribeJAV] post-process: cues {_cues_before}->{_cues_after} "
+                  f"(max_caption={max_caption_seconds}, dedupe={dedupe_repeats}, strip={strip_markers})")
+    except Exception:
+        pass
     srt_path = _build_caption_path(video_path, caption_language)
     try:
         with open(srt_path, "w", encoding="utf-8") as srt_file:
@@ -503,7 +510,8 @@ suppress_non_speech_tokens = stash.Setting("suppressNonSpeechTokens", False)
 initial_prompt = stash.Setting("initialPrompt", "")
 
 # SRT post-processing settings (WhisperJAV-style cleanup).
-clean_subtitles = stash.Setting("cleanSubtitles", False)
+dedupe_repeats = stash.Setting("cleanSubtitles", False)            # collapse repeated lines
+strip_markers = stash.Setting("stripNonSpeechMarkers", False)      # strip (moans)/[music] — off keeps them
 _raw_max_caption = stash.Setting("maxCaptionSeconds", None)
 try:
     max_caption_seconds = float(_raw_max_caption) if _raw_max_caption is not None and str(_raw_max_caption).strip() != "" else None
@@ -617,7 +625,8 @@ def transcribe_scene(scene_id: int):
                 caption_language=caption_language,
                 extra_fields=extra_whisper_fields,
                 max_caption_seconds=max_caption_seconds,
-                clean_subtitles=clean_subtitles,
+                dedupe_repeats=dedupe_repeats,
+                strip_markers=strip_markers,
             )
 
         stash.Log(f"Transcription completed for scene {scene_id} (file: {video_path})")

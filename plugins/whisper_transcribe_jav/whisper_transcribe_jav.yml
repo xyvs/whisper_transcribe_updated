@@ -37,12 +37,16 @@ settings:
     description: "Optional context prompt to guide transcription (e.g. domain vocabulary or expected phrasing)."
     type: STRING
   cleanSubtitles:
-    displayName: Clean Subtitles
-    description: "Post-process the SRT: drop repeated lines (loops) and strip non-lexical markers like (moans)/[music]."
+    displayName: Dedupe Repeated Lines
+    description: "Collapse consecutive repeated lines (repetition loops) into one. Keeps non-lexical markers unless 'Strip Non-Speech Markers' is also on."
+    type: BOOLEAN
+  stripNonSpeechMarkers:
+    displayName: Strip Non-Speech Markers
+    description: "Remove markers like (moans)/[music] from the subtitles. Leave OFF to keep them as scene cues."
     type: BOOLEAN
   maxCaptionSeconds:
     displayName: Max Caption Seconds
-    description: "Cap how long any single caption stays on screen (fixes lines lingering over silence). Blank = no cap. Try 7."
+    description: "Cap how long any single caption stays on screen (fixes lines lingering over silence). Blank = no cap. Try 5-7."
     type: NUMBER
   zzdebugTracing:
     displayName: Debug Tracing
