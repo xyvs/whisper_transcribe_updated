@@ -697,11 +697,6 @@ def transcribe_scene(scene_id: int):
         if dry_run:
             stash.Log(f"Dry-run: would transcribe '{video_path}' -> '{caption_path}' (translate={translate_to_english}, server_url={server_url})")
         else:
-            # Queue metadata scan before transcription starts
-            try:
-                _trigger_metadata_scan([caption_path])
-            except Exception as e:
-                stash.Warn(f"Failed to start metadata scan for captions on scene {scene_id}: {e}")
             caption_path = transcribe_video(
                 video_path,
                 translate=translate_to_english,
@@ -712,6 +707,12 @@ def transcribe_scene(scene_id: int):
                 dedupe_repeats=dedupe_repeats,
                 strip_markers=strip_markers,
             )
+            # Scan for the caption only AFTER it has been written successfully, so a
+            # failed transcription doesn't trigger a scan for a non-existent file.
+            try:
+                _trigger_metadata_scan([caption_path])
+            except Exception as e:
+                stash.Warn(f"Failed to start metadata scan for captions on scene {scene_id}: {e}")
 
         stash.Log(f"Transcription completed for scene {scene_id} (file: {video_path})")
     except Exception as e:
