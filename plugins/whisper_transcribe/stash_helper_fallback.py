@@ -74,17 +74,27 @@ class StashPluginHelper:
         # 3️⃣ Fallback to defaults supplied at construction time.
         return self.settings.get(name, default)
 
-    # ---- Logging (stderr) using Stash plugin log level prefixes ----
+    # ---- Logging (stderr) using Stash's plugin log-level protocol ----
+    # Stash decodes the level from a prefix: SOH (0x01) + level char + STX (0x02).
+    # Level chars: t=trace, d=debug, i=info, w=warning, e=error.
+    # Without this encoding Stash treats every stderr line as an Error.
+    _STASH_LEVELS = {"T": "t", "D": "d", "I": "i", "W": "w", "E": "e"}
+
     def _log(self, level_char: str, *args: Any) -> None:
         try:
             msg = " ".join(str(a) for a in args)
-            sys.stderr.write(f"[{level_char}] {msg}\n")
+            lvl = self._STASH_LEVELS.get(level_char, "i")
+            for line in (msg.splitlines() or [""]):
+                sys.stderr.write(f"\x01{lvl}\x02{line}\n")
             sys.stderr.flush()
         except Exception:
             pass
 
     def Trace(self, *args: Any) -> None:
         self._log("T", *args)
+
+    def Debug(self, *args: Any) -> None:
+        self._log("D", *args)
 
     def Log(self, *args: Any) -> None:
         self._log("I", *args)

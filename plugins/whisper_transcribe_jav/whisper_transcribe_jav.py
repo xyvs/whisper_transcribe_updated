@@ -476,6 +476,9 @@ stash = StashPluginHelper(
 # The minimal fallback helper cannot read UI settings (only defaults), so fetch the
 # real saved settings via GraphQL once, and read every setting through get_setting().
 _ui_settings = _fetch_plugin_settings(stash.JSON_INPUT or {})
+if not _ui_settings:
+    stash.Warn("Could not read saved plugin settings via GraphQL; falling back to defaults. "
+               "Check that the plugin is configured and the server connection is valid.")
 
 
 def get_setting(key, default):
@@ -623,12 +626,27 @@ def _build_extra_whisper_fields() -> dict:
 
 extra_whisper_fields = _build_extra_whisper_fields()
 
-# Optional debug trace of resolved server URL
+# Concise, always-on summary of the effective configuration (Info level).
+try:
+    stash.Log(
+        "Config: "
+        f"server={server_url} "
+        f"language={extra_whisper_fields.get('language')} "
+        f"translate={'true' if translate_to_english else 'false'} "
+        f"maxCaptionSeconds={max_caption_seconds} "
+        f"dedupe={dedupe_repeats} stripMarkers={strip_markers} "
+        f"maxContext={extra_whisper_fields.get('max_context', 'server-default')} "
+        f"dryRun={dry_run}"
+    )
+except Exception:
+    pass
+
+# Optional verbose debug trace
 try:
     if get_setting("zzdebugTracing", False):
-        stash.Log(f"[WhisperTranscribeJAV] Resolved serverUrl={server_url!r}")
-        stash.Log(f"[WhisperTranscribeJAV] translate={'true' if translate_to_english else 'false'}")
-        stash.Log(f"[WhisperTranscribeJAV] Extra whisper fields={extra_whisper_fields!r}")
+        stash.Trace(f"Resolved serverUrl={server_url!r}")
+        stash.Trace(f"Extra whisper fields={extra_whisper_fields!r}")
+        stash.Trace(f"Raw UI settings keys={sorted(_ui_settings.keys()) if isinstance(_ui_settings, dict) else None}")
 except Exception:
     pass
 
