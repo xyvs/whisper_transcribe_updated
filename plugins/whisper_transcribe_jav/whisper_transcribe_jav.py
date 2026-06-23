@@ -104,6 +104,53 @@ def _fetch_server_url_from_settings(json_input: dict) -> str | None:
         # Silent best-effort
         return None
 
+
+def _fetch_plugin_settings(json_input: dict) -> dict:
+    """
+    Fetch this plugin's full saved settings map from Stash via GraphQL.
+    Needed because the minimal fallback helper's Setting() only returns defaults,
+    so every UI setting (translate, language, maxCaption, etc.) must be read here.
+    """
+    try:
+        conn = (json_input or {}).get("server_connection") or (json_input or {}).get("ServerConnection") or {}
+        graphql_url = _build_graphql_url(conn)
+        cookie = (conn.get("SessionCookie") or conn.get("session_cookie") or conn.get("sessionCookie"))
+        cookie_hdr = _cookie_header(cookie)
+        query = """
+            query($ids: [ID!]) {
+                configuration { plugins(include: $ids) }
+            }
+        """
+        headers = {"Content-Type": "application/json"}
+        if cookie_hdr:
+            headers["Cookie"] = cookie_hdr
+        variables = {"ids": ["whisper_transcribe_jav", "WhisperTranscribeJAV"]}
+        payload = json.dumps({"query": query, "variables": variables})
+
+        try:
+            import requests  # type: ignore
+        except Exception:
+            requests = None
+
+        if requests is not None:
+            resp = requests.post(graphql_url, data=payload, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        else:
+            req = urllib.request.Request(graphql_url, data=payload.encode("utf-8"), headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+
+        config_plugins = (((data or {}).get("data") or {}).get("configuration") or {}).get("plugins") or {}
+        if isinstance(config_plugins, dict):
+            for pid in variables["ids"]:
+                settings_map = config_plugins.get(pid)
+                if isinstance(settings_map, dict):
+                    return settings_map
+        return {}
+    except Exception:
+        return {}
+
 # Self-contained transcription logic (no external imports).
 def _post_whisper_audio(wav_path: str, server_url: str, translate: bool, extra_fields: dict | None = None) -> str:
     extra_fields = extra_fields or {}
@@ -426,6 +473,19 @@ stash = StashPluginHelper(
     maxbytes=10 * 1024 * 1024,
 )
 
+# The minimal fallback helper cannot read UI settings (only defaults), so fetch the
+# real saved settings via GraphQL once, and read every setting through get_setting().
+_ui_settings = _fetch_plugin_settings(stash.JSON_INPUT or {})
+
+
+def get_setting(key, default):
+    """Read a plugin setting: prefer the GraphQL-fetched UI value, then the helper, then default."""
+    if isinstance(_ui_settings, dict) and key in _ui_settings:
+        v = _ui_settings.get(key)
+        if v is not None and not (isinstance(v, str) and v.strip() == ""):
+            return v
+    return stash.Setting(key, default)
+
 # ----------------------------------------------------------------------
 # Resolve the Whisper server URL – this logic works for every Stash payload
 # format (dict settings, list of {key,value}, or ``pluginSettings``).
@@ -497,22 +557,28 @@ def _resolve_server_url() -> str:
 # Resolve once at import time (the value is immutable for the lifetime of the run)
 server_url = _resolve_server_url()
 
-translate_to_english = stash.Setting("translateToEnglish", False)
-dry_run = stash.Setting("zzdryRun", False)
+translate_to_english = get_setting("translateToEnglish", False)
+dry_run = get_setting("zzdryRun", False)
 # New timeout setting (seconds) – defaults to 3600 seconds if not configured.
-timeout = stash.Setting("timeout", 3600.0)
+timeout = get_setting("timeout", 3600.0)
+try:
+    timeout = float(timeout)
+    if timeout <= 0:
+        timeout = 3600.0
+except (TypeError, ValueError):
+    timeout = 3600.0
 
 # Additional whisper.cpp inference parameters exposed via UI settings.
-language = stash.Setting("language", "")
-temperature = stash.Setting("temperature", None)
-max_context = stash.Setting("maxContext", None)
-suppress_non_speech_tokens = stash.Setting("suppressNonSpeechTokens", False)
-initial_prompt = stash.Setting("initialPrompt", "")
+language = get_setting("language", "")
+temperature = get_setting("temperature", None)
+max_context = get_setting("maxContext", None)
+suppress_non_speech_tokens = get_setting("suppressNonSpeechTokens", False)
+initial_prompt = get_setting("initialPrompt", "")
 
 # SRT post-processing settings (WhisperJAV-style cleanup).
-dedupe_repeats = stash.Setting("cleanSubtitles", False)            # collapse repeated lines
-strip_markers = stash.Setting("stripNonSpeechMarkers", False)      # strip (moans)/[music] — off keeps them
-_raw_max_caption = stash.Setting("maxCaptionSeconds", None)
+dedupe_repeats = get_setting("cleanSubtitles", False)            # collapse repeated lines
+strip_markers = get_setting("stripNonSpeechMarkers", False)      # strip (moans)/[music] — off keeps them
+_raw_max_caption = get_setting("maxCaptionSeconds", None)
 try:
     max_caption_seconds = float(_raw_max_caption) if _raw_max_caption is not None and str(_raw_max_caption).strip() != "" else None
 except (TypeError, ValueError):
@@ -559,7 +625,7 @@ extra_whisper_fields = _build_extra_whisper_fields()
 
 # Optional debug trace of resolved server URL
 try:
-    if stash.Setting("zzdebugTracing", False):
+    if get_setting("zzdebugTracing", False):
         stash.Log(f"[WhisperTranscribeJAV] Resolved serverUrl={server_url!r}")
         stash.Log(f"[WhisperTranscribeJAV] translate={'true' if translate_to_english else 'false'}")
         stash.Log(f"[WhisperTranscribeJAV] Extra whisper fields={extra_whisper_fields!r}")
