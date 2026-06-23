@@ -1,0 +1,54 @@
+name: Whisper Transcribe JAV
+description: Transcribes video (scene) files using a whisper.cpp server, with extra Japanese-friendly inference options.
+version: 0.3.0
+url: https://github.com/Jay4242/whisper_transcribe/
+ui:
+  css:
+    - whisper_transcribe_jav.css
+  javascript:
+    - whisper_transcribe_jav.js
+settings:
+  serverUrl:
+    displayName: Whisper Server URL
+    description: "The whisper.cpp server inference endpoint URL. Can also be set via WHISPER_SERVER_URL."
+    type: STRING
+  translateToEnglish:
+    displayName: Translate to English
+    description: "Request translation to English (instead of transcribing in source language)."
+    type: BOOLEAN
+  language:
+    displayName: Language
+    description: "Source language code sent to whisper (e.g. ja, en, es). Leave blank for auto-detect."
+    type: STRING
+  temperature:
+    displayName: Temperature
+    description: "Decoding temperature (0.0 = most deterministic). Leave blank to use the server default."
+    type: NUMBER
+  maxContext:
+    displayName: Max Context
+    description: "Max previous-text tokens carried between segments. Set 0 to stop repetition loops on non-speech audio. Leave blank for server default."
+    type: NUMBER
+  suppressNonSpeechTokens:
+    displayName: Suppress Non-Speech Tokens
+    description: "Suppress non-speech tokens (e.g. music, sound effects) in the transcription."
+    type: BOOLEAN
+  initialPrompt:
+    displayName: Initial Prompt
+    description: "Optional context prompt to guide transcription (e.g. domain vocabulary or expected phrasing)."
+    type: STRING
+  zzdebugTracing:
+    displayName: Debug Tracing
+    description: Enable debug tracing for additional logging.
+    type: BOOLEAN
+  zzdryRun:
+    displayName: Dry Run
+    description: If enabled, no files are created; actions are logged only.
+    type: BOOLEAN
+  timeout:
+    displayName: Whisper Server Timeout (seconds)
+    description: "Timeout in seconds for contacting the Whisper server."
+    type: NUMBER
+exec:
+  - python
+  - "{pluginDir}/whisper_transcribe_jav.py"
+interface: raw
