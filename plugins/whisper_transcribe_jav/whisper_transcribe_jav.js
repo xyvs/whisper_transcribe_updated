@@ -260,5 +260,113 @@
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
+  // ------------------------------------------------------------------
+  // Batch button: transcribe all currently-selected scenes from the grid.
+  // ------------------------------------------------------------------
+  const BATCH_BTN_ID = 'whisper-jav-batch-btn';
+
+  function isSceneListPage() {
+    // Matches /scenes and tab variants like /studios/5/scenes, but NOT /scenes/123
+    if (/\/scenes\/\d+/.test(window.location.pathname)) return false;
+    return /(^|\/)scenes\/?$/.test(window.location.pathname);
+  }
+
+  function getSelectedSceneIds() {
+    const ids = [];
+    const seen = new Set();
+    const add = (href) => {
+      const m = href && href.match(/\/scenes\/(\d+)/);
+      if (m && !seen.has(m[1])) { seen.add(m[1]); ids.push(parseInt(m[1], 10)); }
+    };
+    // Strategy 1: scene cards marked selected or with a checked checkbox.
+    document.querySelectorAll('.scene-card, .grid-card').forEach((card) => {
+      const cb = card.querySelector('input[type="checkbox"]');
+      if ((cb && cb.checked) || card.classList.contains('selected')) {
+        const a = card.querySelector('a[href*="/scenes/"]');
+        if (a) add(a.getAttribute('href'));
+      }
+    });
+    // Strategy 2 (fallback): any checked checkbox whose nearest card links to a scene.
+    if (!ids.length) {
+      document.querySelectorAll('input[type="checkbox"]:checked').forEach((cb) => {
+        const card = cb.closest('.grid-card, .scene-card, .card');
+        const a = card && card.querySelector('a[href*="/scenes/"]');
+        if (a) add(a.getAttribute('href'));
+      });
+    }
+    return ids;
+  }
+
+  async function runTranscribeBatch(ids) {
+    const base = document.querySelector('base')?.getAttribute('href') || '/';
+    const graphqlURL = new URL('graphql', new URL(base, window.location.href)).toString();
+    const resolvedId = await resolvePluginId(graphqlURL);
+    if (!resolvedId) {
+      alert('Whisper Transcribe JAV plugin not found on server. Reload plugins and refresh the page.');
+      return;
+    }
+    const mutation = `
+      mutation RunPluginTask($plugin_id: ID!, $args_map: Map!, $description: String) {
+        runPluginTask(plugin_id: $plugin_id, args_map: $args_map, description: $description)
+      }
+    `;
+    let ok = 0;
+    for (const id of ids) {
+      try {
+        const args_map = { mode: 'transcribe_scene_task', scene_id: id };
+        const res = await fetch(graphqlURL, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: mutation, variables: { plugin_id: resolvedId, args_map, description: `Whisper JAV: scene ${id}` } }),
+        });
+        const json = await res.json();
+        if (res.ok && !json.errors) ok++;
+        else console.error('[WhisperTranscribeJAV] queue failed for scene', id, json.errors);
+      } catch (e) {
+        console.error('[WhisperTranscribeJAV] queue error for scene', id, e);
+      }
+    }
+    alert(`Whisper JAV: queued ${ok}/${ids.length} scene(s) for transcription.`);
+  }
+
+  function ensureBatchButton() {
+    const onList = isSceneListPage();
+    let btn = document.getElementById(BATCH_BTN_ID);
+    if (!onList) { if (btn) btn.remove(); return; }
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = BATCH_BTN_ID;
+      btn.type = 'button';
+      btn.className = 'btn btn-primary';
+      btn.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:1050;box-shadow:0 2px 8px rgba(0,0,0,.4);';
+      btn.addEventListener('click', async () => {
+        const ids = getSelectedSceneIds();
+        if (!ids.length) {
+          alert('Select one or more scenes first (use the checkboxes), then click this button.');
+          return;
+        }
+        if (!confirm(`Transcribe ${ids.length} selected scene(s) with Whisper JAV?`)) return;
+        btn.disabled = true;
+        try { await runTranscribeBatch(ids); } finally { btn.disabled = false; }
+      });
+      document.body.appendChild(btn);
+    }
+    const n = getSelectedSceneIds().length;
+    btn.textContent = n ? `Transcribe ${n} selected (Whisper JAV)` : 'Transcribe selected (Whisper JAV)';
+  }
+
+  let batchTimer = null;
+  function scheduleEnsureBatch() {
+    clearTimeout(batchTimer);
+    batchTimer = setTimeout(ensureBatchButton, 150);
+  }
+  const batchObserver = new MutationObserver(scheduleEnsureBatch);
+  batchObserver.observe(document.body, { childList: true, subtree: true });
+  document.addEventListener('click', scheduleEnsureBatch, true);   // refresh count after (de)selecting
+  window.addEventListener('popstate', scheduleEnsureBatch);
+  window.addEventListener('hashchange', scheduleEnsureBatch);
+  scheduleEnsureBatch();
+
   console.debug('[WhisperTranscribe] UI script initialized');
 })();
