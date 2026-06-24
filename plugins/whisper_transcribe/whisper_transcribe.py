@@ -103,6 +103,52 @@ def _fetch_server_url_from_settings(json_input: dict) -> str | None:
         # Silent best-effort
         return None
 
+
+def _fetch_plugin_settings(json_input: dict) -> dict:
+    """
+    Fetch this plugin's full saved settings map from Stash via GraphQL.
+    Needed because the minimal fallback helper's Setting() only returns defaults.
+    """
+    try:
+        conn = (json_input or {}).get("server_connection") or (json_input or {}).get("ServerConnection") or {}
+        graphql_url = _build_graphql_url(conn)
+        cookie = (conn.get("SessionCookie") or conn.get("session_cookie") or conn.get("sessionCookie"))
+        cookie_hdr = _cookie_header(cookie)
+        query = """
+            query($ids: [ID!]) {
+                configuration { plugins(include: $ids) }
+            }
+        """
+        headers = {"Content-Type": "application/json"}
+        if cookie_hdr:
+            headers["Cookie"] = cookie_hdr
+        variables = {"ids": ["whisper_transcribe", "WhisperTranscribe"]}
+        payload = json.dumps({"query": query, "variables": variables})
+
+        try:
+            import requests  # type: ignore
+        except Exception:
+            requests = None
+
+        if requests is not None:
+            resp = requests.post(graphql_url, data=payload, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        else:
+            req = urllib.request.Request(graphql_url, data=payload.encode("utf-8"), headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+
+        config_plugins = (((data or {}).get("data") or {}).get("configuration") or {}).get("plugins") or {}
+        if isinstance(config_plugins, dict):
+            for pid in variables["ids"]:
+                settings_map = config_plugins.get(pid)
+                if isinstance(settings_map, dict):
+                    return settings_map
+        return {}
+    except Exception:
+        return {}
+
 # Self-contained transcription logic (no external imports).
 def _post_whisper_audio(wav_path: str, server_url: str, translate: bool) -> str:
     try:
@@ -337,6 +383,19 @@ stash = StashPluginHelper(
     maxbytes=10 * 1024 * 1024,
 )
 
+# The minimal fallback helper cannot read UI settings (only defaults), so fetch the
+# real saved settings via GraphQL once, and read every setting through get_setting().
+_ui_settings = _fetch_plugin_settings(stash.JSON_INPUT or {})
+
+
+def get_setting(key, default):
+    """Read a plugin setting: prefer the GraphQL-fetched UI value, then the helper, then default."""
+    if isinstance(_ui_settings, dict) and key in _ui_settings:
+        v = _ui_settings.get(key)
+        if v is not None and not (isinstance(v, str) and v.strip() == ""):
+            return v
+    return stash.Setting(key, default)
+
 # ----------------------------------------------------------------------
 # Resolve the Whisper server URL – this logic works for every Stash payload
 # format (dict settings, list of {key,value}, or ``pluginSettings``).
@@ -408,15 +467,23 @@ def _resolve_server_url() -> str:
 # Resolve once at import time (the value is immutable for the lifetime of the run)
 server_url = _resolve_server_url()
 
-translate_to_english = stash.Setting("translateToEnglish", False)
-dry_run = stash.Setting("zzdryRun", False)
+translate_to_english = get_setting("translateToEnglish", False)
+dry_run = get_setting("zzdryRun", False)
 # New timeout setting (seconds) – defaults to 3600 seconds if not configured.
-timeout = stash.Setting("timeout", 3600.0)
+timeout = get_setting("timeout", 3600.0)
+try:
+    timeout = float(timeout)
+    if timeout <= 0:
+        timeout = 3600.0
+except (TypeError, ValueError):
+    timeout = 3600.0
 
 # Optional debug trace of resolved server URL
 try:
-    if stash.Setting("zzdebugTracing", False):
-        stash.Log(f"[WhisperTranscribe] Resolved serverUrl={server_url!r}")
+    stash.Log(f"Config: server={server_url} mode=english-no-translate dryRun={dry_run}")
+    if get_setting("zzdebugTracing", False):
+        stash.Trace(f"Resolved serverUrl={server_url!r}")
+        stash.Trace(f"Raw UI settings keys={sorted(_ui_settings.keys()) if isinstance(_ui_settings, dict) else None}")
 except Exception:
     pass
 
@@ -467,17 +534,18 @@ def transcribe_scene(scene_id: int):
         if dry_run:
             stash.Log(f"Dry-run: would transcribe '{video_path}' -> '{caption_path}' (translate={translate_to_english}, server_url={server_url})")
         else:
-            # Queue metadata scan before transcription starts
-            try:
-                _trigger_metadata_scan([caption_path])
-            except Exception as e:
-                stash.Warn(f"Failed to start metadata scan for captions on scene {scene_id}: {e}")
             caption_path = transcribe_video(
                 video_path,
                 translate=translate_to_english,
                 server_url=server_url,
                 caption_language=caption_language,
             )
+            # Scan for the caption only AFTER it has been written successfully, so a
+            # failed transcription doesn't trigger a scan for a non-existent file.
+            try:
+                _trigger_metadata_scan([caption_path])
+            except Exception as e:
+                stash.Warn(f"Failed to start metadata scan for captions on scene {scene_id}: {e}")
 
         stash.Log(f"Transcription completed for scene {scene_id} (file: {video_path})")
     except Exception as e:
