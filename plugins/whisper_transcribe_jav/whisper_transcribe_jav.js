@@ -330,16 +330,25 @@
     alert(`Whisper JAV: queued ${ok}/${ids.length} scene(s) for transcription.`);
   }
 
+  function findListToolbar() {
+    // Stash renders the scenes-list filter controls in a .btn-toolbar near the top.
+    for (const el of document.querySelectorAll('.btn-toolbar')) {
+      if (el.offsetParent !== null && el.getBoundingClientRect().top < 220) return el;
+    }
+    return null;
+  }
+
   function ensureBatchButton() {
-    const onList = isSceneListPage();
+    if (!isSceneListPage()) {
+      const ex = document.getElementById(BATCH_BTN_ID);
+      if (ex) ex.remove();
+      return;
+    }
     let btn = document.getElementById(BATCH_BTN_ID);
-    if (!onList) { if (btn) btn.remove(); return; }
     if (!btn) {
       btn = document.createElement('button');
       btn.id = BATCH_BTN_ID;
       btn.type = 'button';
-      btn.className = 'btn btn-primary';
-      btn.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:1050;box-shadow:0 2px 8px rgba(0,0,0,.4);';
       btn.addEventListener('click', async () => {
         const ids = getSelectedSceneIds();
         if (!ids.length) {
@@ -350,10 +359,21 @@
         btn.disabled = true;
         try { await runTranscribeBatch(ids); } finally { btn.disabled = false; }
       });
-      document.body.appendChild(btn);
+    }
+    const toolbar = findListToolbar();
+    if (toolbar) {
+      // Native: sit inside the top filter toolbar.
+      btn.className = 'btn btn-primary ml-2';
+      btn.style.cssText = '';
+      if (btn.parentElement !== toolbar) toolbar.appendChild(btn);
+    } else {
+      // Fallback: fixed at top-right, below the navbar.
+      btn.className = 'btn btn-primary';
+      btn.style.cssText = 'position:fixed;right:20px;top:70px;z-index:1050;box-shadow:0 2px 8px rgba(0,0,0,.4);';
+      if (btn.parentElement !== document.body) document.body.appendChild(btn);
     }
     const n = getSelectedSceneIds().length;
-    btn.textContent = n ? `Transcribe ${n} selected (Whisper JAV)` : 'Transcribe selected (Whisper JAV)';
+    btn.textContent = n ? `Transcribe ${n} (Whisper JAV)` : 'Transcribe selected (Whisper JAV)';
   }
 
   let batchTimer = null;

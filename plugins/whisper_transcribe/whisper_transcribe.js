@@ -328,17 +328,25 @@
     alert(`Whisper: queued ${ok}/${ids.length} scene(s) for transcription.`);
   }
 
+  function findListToolbar() {
+    // Stash renders the scenes-list filter controls in a .btn-toolbar near the top.
+    for (const el of document.querySelectorAll('.btn-toolbar')) {
+      if (el.offsetParent !== null && el.getBoundingClientRect().top < 220) return el;
+    }
+    return null;
+  }
+
   function ensureBatchButton() {
-    const onList = isSceneListPage();
+    if (!isSceneListPage()) {
+      const ex = document.getElementById(BATCH_BTN_ID);
+      if (ex) ex.remove();
+      return;
+    }
     let btn = document.getElementById(BATCH_BTN_ID);
-    if (!onList) { if (btn) btn.remove(); return; }
     if (!btn) {
       btn = document.createElement('button');
       btn.id = BATCH_BTN_ID;
       btn.type = 'button';
-      btn.className = 'btn btn-secondary';
-      // Offset well above the JAV plugin's button (bottom:20px) so the two FABs never overlap.
-      btn.style.cssText = 'position:fixed;right:20px;bottom:84px;z-index:1050;box-shadow:0 2px 8px rgba(0,0,0,.4);';
       btn.addEventListener('click', async () => {
         const ids = getSelectedSceneIds();
         if (!ids.length) {
@@ -349,10 +357,21 @@
         btn.disabled = true;
         try { await runTranscribeBatch(ids); } finally { btn.disabled = false; }
       });
-      document.body.appendChild(btn);
+    }
+    const toolbar = findListToolbar();
+    if (toolbar) {
+      // Native: sit inside the top filter toolbar, next to the JAV button.
+      btn.className = 'btn btn-secondary ml-2';
+      btn.style.cssText = '';
+      if (btn.parentElement !== toolbar) toolbar.appendChild(btn);
+    } else {
+      // Fallback: fixed top-right, stacked below the JAV button (top:70px) so they don't overlap.
+      btn.className = 'btn btn-secondary';
+      btn.style.cssText = 'position:fixed;right:20px;top:118px;z-index:1050;box-shadow:0 2px 8px rgba(0,0,0,.4);';
+      if (btn.parentElement !== document.body) document.body.appendChild(btn);
     }
     const n = getSelectedSceneIds().length;
-    btn.textContent = n ? `Transcribe ${n} selected (Whisper)` : 'Transcribe selected (Whisper)';
+    btn.textContent = n ? `Transcribe ${n} (Whisper)` : 'Transcribe selected (Whisper)';
   }
 
   let batchTimer = null;
