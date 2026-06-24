@@ -328,50 +328,66 @@
     alert(`Whisper: queued ${ok}/${ids.length} scene(s) for transcription.`);
   }
 
+  // Toolbar resolution + insertion point — same approach the MissingScenes plugin
+  // uses, so the button lands in the same place across Stash versions.
   function findListToolbar() {
-    // Stash renders the scenes-list filter controls in a .btn-toolbar near the top.
-    for (const el of document.querySelectorAll('.btn-toolbar')) {
-      if (el.offsetParent !== null && el.getBoundingClientRect().top < 220) return el;
+    return document.querySelector('.filtered-list-toolbar')
+        || document.querySelector('.scenes-header')
+        || document.querySelector('[class*="ListHeader"]')
+        || document.querySelector('.content-header')
+        || document.querySelector('.btn-toolbar');
+  }
+
+  function findToolbarInsertionPoint(toolbar) {
+    let p = toolbar.querySelector('.zoom-slider-container') || toolbar.querySelector('.display-mode-select');
+    if (!p) {
+      for (const group of toolbar.querySelectorAll('.btn-group')) {
+        if (group.querySelector('.fa-icon') || group.querySelector('svg')) p = group;
+      }
     }
-    return null;
+    return p;
+  }
+
+  const MIC_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:1em;height:1em;margin-right:0.4em;vertical-align:-0.125em;"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>';
+
+  function createBatchButton() {
+    const btn = document.createElement('button');
+    btn.id = BATCH_BTN_ID;
+    btn.type = 'button';
+    btn.title = 'Transcribe selected scenes (Whisper, English)';
+    btn.addEventListener('click', async () => {
+      const ids = getSelectedSceneIds();
+      if (!ids.length) return;
+      if (!confirm(`Transcribe ${ids.length} selected scene(s) with Whisper (English)?`)) return;
+      btn.disabled = true;
+      try { await runTranscribeBatch(ids); } finally { btn.disabled = false; }
+    });
+    return btn;
   }
 
   function ensureBatchButton() {
-    if (!isSceneListPage()) {
-      const ex = document.getElementById(BATCH_BTN_ID);
-      if (ex) ex.remove();
-      return;
-    }
+    // Only show the button when on a scenes grid AND one or more scenes are selected.
+    const ids = isSceneListPage() ? getSelectedSceneIds() : [];
     let btn = document.getElementById(BATCH_BTN_ID);
-    if (!btn) {
-      btn = document.createElement('button');
-      btn.id = BATCH_BTN_ID;
-      btn.type = 'button';
-      btn.addEventListener('click', async () => {
-        const ids = getSelectedSceneIds();
-        if (!ids.length) {
-          alert('Select one or more scenes first (use the checkboxes), then click this button.');
-          return;
-        }
-        if (!confirm(`Transcribe ${ids.length} selected scene(s) with Whisper (English)?`)) return;
-        btn.disabled = true;
-        try { await runTranscribeBatch(ids); } finally { btn.disabled = false; }
-      });
-    }
+    if (!ids.length) { if (btn) btn.remove(); return; }
+    if (!btn) btn = createBatchButton();
+
     const toolbar = findListToolbar();
     if (toolbar) {
-      // Native: sit inside the top filter toolbar, next to the JAV button.
-      btn.className = 'btn btn-secondary ml-2';
-      btn.style.cssText = '';
-      if (btn.parentElement !== toolbar) toolbar.appendChild(btn);
+      btn.className = 'ms-whisper-batch btn btn-secondary';
+      btn.style.cssText = 'margin-left:0.5rem;';
+      if (!toolbar.contains(btn)) {
+        const ip = findToolbarInsertionPoint(toolbar);
+        if (ip && ip.parentNode) ip.parentNode.insertBefore(btn, ip.nextSibling);
+        else toolbar.appendChild(btn);
+      }
     } else {
-      // Fallback: fixed top-right, stacked below the JAV button (top:70px) so they don't overlap.
+      // Fallback: fixed top-right, stacked below the JAV button so they don't overlap.
       btn.className = 'btn btn-secondary';
       btn.style.cssText = 'position:fixed;right:20px;top:118px;z-index:1050;box-shadow:0 2px 8px rgba(0,0,0,.4);';
       if (btn.parentElement !== document.body) document.body.appendChild(btn);
     }
-    const n = getSelectedSceneIds().length;
-    btn.textContent = n ? `Transcribe ${n} (Whisper)` : 'Transcribe selected (Whisper)';
+    btn.innerHTML = `${MIC_SVG}Transcribe ${ids.length} (Whisper)`;
   }
 
   let batchTimer = null;
