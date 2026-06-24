@@ -337,8 +337,8 @@
       btn.id = BATCH_BTN_ID;
       btn.type = 'button';
       btn.className = 'btn btn-secondary';
-      // Offset above the JAV plugin's button so the two FABs don't overlap.
-      btn.style.cssText = 'position:fixed;right:20px;bottom:70px;z-index:1050;box-shadow:0 2px 8px rgba(0,0,0,.4);';
+      // Offset well above the JAV plugin's button (bottom:20px) so the two FABs never overlap.
+      btn.style.cssText = 'position:fixed;right:20px;bottom:84px;z-index:1050;box-shadow:0 2px 8px rgba(0,0,0,.4);';
       btn.addEventListener('click', async () => {
         const ids = getSelectedSceneIds();
         if (!ids.length) {
